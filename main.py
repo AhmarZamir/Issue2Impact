@@ -1,6 +1,13 @@
 from src.ingestion.loader import load_repository
 from src.ingestion.chunking import chunk_documents
 from src.retrieval.vector_store import create_vector_store
+from src.retrieval.retriever import retrieve_candidates
+from src.retrieval.reranker import DocumetReranker
+from src.retrieval.pipeline import RetrievalPipeline
+
+
+
+
 
 
 
@@ -20,24 +27,33 @@ chunks = chunk_documents(documents)
 print(f"Created {len(chunks)} chunks from the documents.")
 
 
-
 # Storing that embeddings of chunking inot the vector store
 vector_store = create_vector_store(chunks)
 
-query = "How to authenticate a user?"
 
-results = vector_store.similarity_search(query, k=3)
+query = "How does user login work?"
 
 
-for index , result in enumerate(results):
 
-    print("=================")
+results = RetrievalPipeline.retrieve(query)
 
-    print(f"file path : {result.metadata["file_path"]}")
 
-    print(f"chunk index : {result.metadata["chunk_index"]}")
 
-    print(f"Content: {result.page_content}")
+print("\n--------------------")
+print("\n--------------------")
+print("\n--------------------")
+
+
+print("\nRERANKED RESULTS")
+print("================")
+
+for index , (document , score) in enumerate(results):
+
+    print(f"Reranked candidate {index + 1}:")
+    print(f"Score : {score}")
+    print(f"file path : {document.metadata["file_path"]}")
+
+    print(f"Content : {document.page_content[:300]}")  # Print first 300 characters of the content
 
 
 

@@ -11,6 +11,7 @@ def create_vector_store(chunks):
         documents=chunks,
         embedding =embeddings,
         collection_name ="issue2impact",
+        persist_directory ="./chroma_db",
     )
 
     return vector_store
