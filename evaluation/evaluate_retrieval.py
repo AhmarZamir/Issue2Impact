@@ -1,4 +1,5 @@
 from evaluation.retrieval_cases import RETRIEVAL_TEST_CASES
+from src.retrieval.pipeline import RetrievalPipeline
 
 
 def evaluate_retrieval(retrieval_pipeline):
