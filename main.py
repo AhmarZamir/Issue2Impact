@@ -39,7 +39,12 @@ print(f"Created {len(chunks)} chunks from the documents.")
 vector_store = create_vector_store(chunks)
 
 
-query = "How does user login work?"
+query = """
+There seems to be an issue with authentication.
+
+Where is token validation implemented and
+what part of the repository should I inspect?
+"""
 
 
 
@@ -81,12 +86,16 @@ tool = create_repository_search_tool(RetrievalPipe)
 
 agent = RepositoryAgent(tool)
 
-results = agent.inspect_decision(query)
 
 
-print(f"Results Content {results.content}")
+# results = agent.inspect_decision(query)
+results = agent.run(query)
 
-print(f"tool called {results.tool_calls}")
+
+
+print(f"Results Content {results}")
+
+# print(f"tool called {results.tool_calls}")
 
 
  

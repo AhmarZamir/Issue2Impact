@@ -3,6 +3,9 @@ from langchain_core.tools import tool
 
 def create_repository_search_tool(retrieval_pipeline):
 
+
+
+    @tool
     def search_repository(query:str):
 
         
@@ -26,7 +29,7 @@ def create_repository_search_tool(retrieval_pipeline):
 
         for index , (document , score) in enumerate(results , start =1,):
 
-            file_path = docuement.metadata.get("file_path", "Unknown file path")
+            file_path = document.metadata.get("file_path", "Unknown file path")
 
             chunk_index = document.metadata.get("chunk_index", "Unknown chunk index")
 
