@@ -3,4 +3,4 @@ __pycache__/
 *.pyo
 *.pyd
 chroma_db/
-
+.env

@@ -12,7 +12,7 @@ class RetrievalPipeline:
         self.candidate_k = candidate_k
         self.rerank_k = rerank_k
 
-        def retrieve(self , query:str):
+    def retrieve(self , query:str):
             
             candidates = retrieve_candidates(self.vector_store , query , top_k=self.candidate_k)
 

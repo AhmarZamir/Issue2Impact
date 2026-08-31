@@ -1,9 +1,17 @@
 from src.ingestion.loader import load_repository
 from src.ingestion.chunking import chunk_documents
 from src.retrieval.vector_store import create_vector_store
+from src.retrieval.pipeline import RetrievalPipeline 
+from evaluation.evaluate_retrieval import evaluate_retrieval
+
+from src.tools.repository_tools import create_repository_search_tool
+from src.agents.repository_agent import RepositoryAgent
+
+
 from src.retrieval.retriever import retrieve_candidates
 from src.retrieval.reranker import DocumetReranker
-from src.retrieval.pipeline import RetrievalPipeline
+
+
 
 
 
@@ -35,7 +43,57 @@ query = "How does user login work?"
 
 
 
-results = RetrievalPipeline.retrieve(query)
+
+
+
+
+
+# candidates = retrieve_candidates(vector_store , query , top_k=8)
+
+# print("Retrieved Candidates")
+# print("\n--------------------")
+
+# for index , document in enumerate(candidates):
+#     print(f"Candidate {index + 1}:")
+#     print(f"chunk index: {document.metadata['chunk_index']}")
+#     print(f"File Path: {document.metadata['file_path']}")
+#     print(f"Content: {document.page_content[:300]}")  
+
+
+# reranked = DocumetReranker().rerank(query , candidates , top_k=3)
+
+
+# print("\nReranked Results")
+# print("================")
+
+# for reranked_index , (document , score) in enumerate(reranked):
+#     print(f"Reranked candidate {reranked_index + 1}:")
+#     print(f"Score : {score}")
+#     print(f"chunk index: {document.metadata['chunk_index']}")
+#     print(f"File Path: {document.metadata['file_path']}")
+#     print(f"Content: {document.page_content[:300]}")  # Print first 300 characters of the content
+
+    
+
+RetrievalPipe = RetrievalPipeline(vector_store)
+
+tool = create_repository_search_tool(RetrievalPipe)
+
+agent = RepositoryAgent(tool)
+
+results = agent.inspect_decision(query)
+
+
+print(f"Results Content {results.content}")
+
+print(f"tool called {results.tool_calls}")
+
+
+ 
+
+
+
+
 
 
 
@@ -47,13 +105,15 @@ print("\n--------------------")
 print("\nRERANKED RESULTS")
 print("================")
 
-for index , (document , score) in enumerate(results):
 
-    print(f"Reranked candidate {index + 1}:")
-    print(f"Score : {score}")
-    print(f"file path : {document.metadata["file_path"]}")
+# for index , (document , score) in enumerate(results):
 
-    print(f"Content : {document.page_content[:300]}")  # Print first 300 characters of the content
+#     print(f"Reranked candidate {index + 1}:")
+#     print(f"Score : {score}")
+#     print(f"file path : {document.metadata["file_path"]}")
+
+#     print(f"Content : {document.page_content[:300]}")  # Print first 300 characters of the content
+
 
 
 
@@ -86,3 +146,14 @@ for index , (document , score) in enumerate(results):
 #     print(len(chunk.page_content[:200]))
 
 
+
+
+
+
+
+# Evaluation of the retrieval pipeline using predefined test cases
+
+
+# eval_result = evaluate_retrieval(RetrievalPipe)
+
+# print(f"Retrieval Evaluation Accuracy: {eval_result:.2f}%")
