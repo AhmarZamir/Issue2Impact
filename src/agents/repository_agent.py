@@ -50,6 +50,8 @@ Do not invent repository details.
         return response 
 
 
+
+
     def run (self , query:str):
 
         messages =[
@@ -107,11 +109,11 @@ Rules:
                     final_response =self.llm_with_tools.invoke(messages)
 
 
-                    return final_response.content
+            return final_response.content
 
 
 
-                return response.content
+        return response.content
 
 
 
