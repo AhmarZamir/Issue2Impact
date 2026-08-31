@@ -45,7 +45,7 @@ Code : {document.page_content[:300]}
 """
 )
 
-            return "\n".join(formatted_results)
+        return "\n".join(formatted_results)
 
 
     return search_repository
