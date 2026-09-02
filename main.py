@@ -4,12 +4,13 @@ from src.retrieval.vector_store import create_vector_store
 from src.retrieval.pipeline import RetrievalPipeline 
 from evaluation.evaluate_retrieval import evaluate_retrieval
 
-from src.tools.repository_tools import create_repository_search_tool
+from src.tools.repository_tools import create_repository_search_tool, read_repository_file
 from src.agents.repository_agent import RepositoryAgent
 
 
 from src.retrieval.retriever import retrieve_candidates
 from src.retrieval.reranker import DocumetReranker
+
 
 
 
@@ -82,23 +83,20 @@ what part of the repository should I inspect?
 
 RetrievalPipe = RetrievalPipeline(vector_store)
 
-tool = create_repository_search_tool(RetrievalPipe)
+tool = create_repository_search_tool(RetrievalPipe )
 
-agent = RepositoryAgent(tool)
+agent = RepositoryAgent([tool , read_repository_file])
 
 
 
-# results = agent.inspect_decision(query)
-results = agent.run(query)
+results = agent.inspect_decision(query)
+# results = agent.run(query)
 
 
 
 print(f"Results Content {results}")
 
 # print(f"tool called {results.tool_calls}")
-
-
- 
 
 
 

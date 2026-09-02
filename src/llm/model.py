@@ -8,6 +8,9 @@ def get_llm():
     llm = ChatGoogleGenerativeAI(
         model = "gemini-3.6-flash",
         temperature = 0,
+        timeout = 120,
+        max_retries = 1,
+        
 
     )
 
