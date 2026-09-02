@@ -1,11 +1,12 @@
-from sentence_transformers import CrossEncoder
+class DocumentReranker:
 
+    def __init__(self, model=None):
+        if model is None:
+            from sentence_transformers import CrossEncoder
 
-class DocumetReranker:
+            model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-
-    def __init__(self):
-        self.model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        self.model = model
 
 
 
@@ -21,14 +22,11 @@ class DocumetReranker:
         scores = self.model.predict(pairs)
 
 
-        scored_docuemts = list(zip(documents , scores))
+        scored_documents = list(zip(documents, scores))
 
-        scored_docuemts.sort(key=lambda x: x[1] , reverse=True)
+        scored_documents.sort(key=lambda item: item[1], reverse=True)
 
+        return scored_documents[:top_k]
 
-        return scored_docuemts[:top_k]
-
-
-
-
-        
+# Backwards-compatible alias for code written during Phase 3.
+DocumetReranker = DocumentReranker

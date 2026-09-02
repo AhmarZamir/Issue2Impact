@@ -34,12 +34,12 @@ def create_repository_search_tool(retrieval_pipeline):
 
             formatted_results.append(
                 f"""
-Reranked candidate {index}
-Score: {score}
+Result {index}
+Relevance Score: {float(score):.4f}
 Chunk index: {chunk_index}
 File Path: {file_path}
 Code:
-{document.page_content[:300]}
+{document.page_content}
 """.strip()
             )
 

@@ -2,5 +2,10 @@ langchain-core
 langchain-text-splitters
 langchain-huggingface
 langchain-chroma
+langchain-google-genai
+langgraph
 sentence-transformers
 chromadb
+python-dotenv
+typing-extensions
+pytest

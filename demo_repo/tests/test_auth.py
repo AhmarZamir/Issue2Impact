@@ -1,4 +1,4 @@
-from auth import login
+from demo_repo.auth import login
 
 
 def test_valid_login():
