@@ -89,8 +89,8 @@ agent = RepositoryAgent([tool , read_repository_file])
 
 
 
-results = agent.inspect_decision(query)
-# results = agent.run(query)
+# results = agent.inspect_decision(query)
+results = agent.run(query)
 
 
 
