@@ -55,12 +55,33 @@ def run(query: str, show_trace: bool = False):
         config={"recursion_limit": 10},
     )
 
+
+
+
+
     if show_trace:
         for message in result["messages"]:
             print(f"\n--- {type(message).__name__} ---")
             print(message)
 
-    return result["messages"][-1].content
+    final_content = result["messages"][-1].content
+    return extract_text(final_content)
+
+
+
+def extract_text(content):
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        return "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict)
+        )
+
+    return str(content)
+
 
 
 if __name__ == "__main__":

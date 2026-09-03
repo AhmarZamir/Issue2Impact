@@ -14,7 +14,7 @@ def get_llm():
     """
     return ChatGoogleGenerativeAI(
         model=os.getenv("LLM_MODEL", "gemini-3.5-flash-lite"),
-        temperature=0,
+        # temperature=0,
         timeout=120,
         max_retries=2,
     )

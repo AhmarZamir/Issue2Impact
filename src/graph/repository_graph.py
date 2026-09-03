@@ -25,6 +25,18 @@ class RepositoryGraph:
     def build(self):
         graph = StateGraph(AgentState)
         graph.add_node("agent", self.agent_node)
+
+
+                       # ToolNode(self.tools)
+                       # It automatically:
+       # Reads the requested tool name.
+       # Finds the matching Python tool.
+       # Passes the arguments.
+       # Executes the tool.
+       # Creates a ToolMessage.
+       # Adds the result to state.
+
+       
         graph.add_node("tools", ToolNode(self.tools))
 
         graph.add_edge(START, "agent")
