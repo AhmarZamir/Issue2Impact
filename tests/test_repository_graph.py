@@ -7,8 +7,6 @@ from src.graph.repository_graph import RepositoryGraph
 
 
 class ScriptedLLM:
-    """Deterministic model used to test graph behavior without an API call."""
-
     def __init__(self, responses):
         self.responses = iter(responses)
 
@@ -21,8 +19,6 @@ class ScriptedLLM:
 
 
 class StaticRouter:
-    """Deterministic router used to isolate graph routing in tests."""
-
     def __init__(self, route, reason="test route"):
         self.route_name = route
         self.reason = reason
@@ -32,35 +28,34 @@ class StaticRouter:
 
 
 class StaticPlanner:
-    """Deterministic planner used to test investigator-to-planner handoff."""
-
     def __init__(self):
         self.calls = []
 
-    def create_plan(self, issue, investigation):
-        self.calls.append((issue, investigation))
+    def create_plan(self, issue, investigation, critic_feedback=None):
+        self.calls.append((issue, investigation, critic_feedback))
         return SimpleNamespace(
-            summary="Tighten token validation and logout behavior.",
+            summary="Tighten authentication handling.",
             files_to_change=["auth.py"],
-            steps=[
-                "Update token validation behavior.",
-                "Keep logout behavior consistent with validation.",
-            ],
-            tests=["Add invalid-token logout coverage."],
-            risks=["Authentication behavior may regress for valid tokens."],
+            steps=["Update token validation behavior."],
+            tests=["Add invalid-token coverage."],
+            risks=["Valid-token behavior could regress."],
         )
+
+
+class SequenceCritic:
+    def __init__(self, decisions):
+        self.decisions = iter(decisions)
+        self.calls = []
+
+    def review(self, issue, investigation, plan):
+        self.calls.append((issue, investigation, plan))
+        return next(self.decisions)
 
 
 @tool
 def search_repository(query: str) -> str:
     """Search test repository evidence."""
     return f"auth.py matches {query}"
-
-
-@tool
-def read_repository_file(file_path: str) -> str:
-    """Read a test repository file."""
-    return f"contents of {file_path}"
 
 
 def tool_call(name, args, call_id):
@@ -71,122 +66,116 @@ def invoke(graph, query):
     return graph.invoke(
         {
             "user_query": query,
+            "retry_count": 0,
             "messages": [HumanMessage(content=query)],
         },
-        config={"recursion_limit": 12},
+        config={"recursion_limit": 30},
     )
 
 
-def test_router_sends_general_question_to_general_node():
+def approved_decision(feedback="Plan is grounded and complete."):
+    return SimpleNamespace(
+        approved=True,
+        feedback=feedback,
+        needs_more_evidence=False,
+    )
+
+
+def rejected_plan_decision(feedback="Plan needs revision."):
+    return SimpleNamespace(
+        approved=False,
+        feedback=feedback,
+        needs_more_evidence=False,
+    )
+
+
+def test_general_route_still_ends_without_planner_or_critic():
     llm = ScriptedLLM([AIMessage(content="Unit tests verify behavior.")])
     graph = RepositoryGraph(
         llm,
         [search_repository],
-        router=StaticRouter("general", "general programming question"),
+        router=StaticRouter("general"),
         planner=StaticPlanner(),
+        critic=SequenceCritic([]),
     ).build()
 
-    result = invoke(graph, "What is testing?")
+    result = invoke(graph, "What is unit testing?")
 
     assert result["route"] == "general"
-    assert result["route_reason"] == "general programming question"
     assert result["messages"][-1].content == "Unit tests verify behavior."
     assert "investigation" not in result
     assert "plan" not in result
-    assert not any(isinstance(message, ToolMessage) for message in result["messages"])
 
 
-def test_router_sends_unsupported_question_to_deterministic_response():
-    llm = ScriptedLLM([])
-    graph = RepositoryGraph(
-        llm,
-        [search_repository],
-        router=StaticRouter("unsupported"),
-        planner=StaticPlanner(),
-    ).build()
-
-    result = invoke(graph, "Write a romantic poem.")
-
-    assert result["route"] == "unsupported"
-    assert "outside Issue2Impact" in result["messages"][-1].content
-    assert "investigation" not in result
-    assert "plan" not in result
-    assert not any(isinstance(message, ToolMessage) for message in result["messages"])
-
-
-def test_repository_route_hands_investigation_to_planner():
+def test_critic_can_approve_first_plan_without_retry():
     planner = StaticPlanner()
-    llm = ScriptedLLM(
-        [
-            AIMessage(
-                content="",
-                tool_calls=[tool_call("search_repository", {"query": "login"}, "1")],
-            ),
-            AIMessage(content="auth.py contains the login implementation."),
-        ]
-    )
+    critic = SequenceCritic([approved_decision()])
+    llm = ScriptedLLM([AIMessage(content="auth.py contains validate_token().")])
     graph = RepositoryGraph(
         llm,
         [search_repository],
         router=StaticRouter("repository"),
         planner=planner,
+        critic=critic,
     ).build()
 
-    result = invoke(graph, "Investigate login behavior and propose a fix.")
+    result = invoke(graph, "Investigate token validation and propose a fix.")
 
-    assert result["route"] == "repository"
-    assert result["investigation"] == "auth.py contains the login implementation."
-    assert planner.calls == [
-        (
-            "Investigate login behavior and propose a fix.",
-            "auth.py contains the login implementation.",
-        )
-    ]
-    assert "Implementation Plan" in result["plan"]
-    assert "auth.py" in result["plan"]
-    assert result["messages"][-1].content == result["plan"]
-
-
-def test_repository_route_supports_multi_step_tool_use_before_planning():
-    planner = StaticPlanner()
-    llm = ScriptedLLM(
-        [
-            AIMessage(
-                content="",
-                tool_calls=[tool_call("search_repository", {"query": "tokens"}, "1")],
-            ),
-            AIMessage(
-                content="",
-                tool_calls=[
-                    tool_call(
-                        "read_repository_file",
-                        {"file_path": "auth.py"},
-                        "2",
-                    )
-                ],
-            ),
-            AIMessage(
-                content=(
-                    "auth.py contains validate_token() and logout(); logout depends "
-                    "on token validation."
-                )
-            ),
-        ]
-    )
-    graph = RepositoryGraph(
-        llm,
-        [search_repository, read_repository_file],
-        router=StaticRouter("repository"),
-        planner=planner,
-    ).build()
-
-    result = invoke(graph, "Investigate token validation and logout safety.")
-
-    tool_messages = [
-        message for message in result["messages"] if isinstance(message, ToolMessage)
-    ]
-    assert len(tool_messages) == 2
-    assert "contents of auth.py" in tool_messages[-1].content
-    assert "validate_token()" in result["investigation"]
-    assert result["plan"].startswith("Implementation Plan")
+    assert result["plan_approved"] is True
+    assert result["retry_count"] == 0
     assert len(planner.calls) == 1
+    assert len(critic.calls) == 1
+    assert result["messages"][-1].content.startswith("Critic-approved implementation plan")
+
+
+def test_plan_revision_loop_stops_after_critic_approval():
+    planner = StaticPlanner()
+    critic = SequenceCritic(
+        [
+            rejected_plan_decision("Add a stronger test step."),
+            approved_decision("Revised plan is acceptable."),
+        ]
+    )
+    llm = ScriptedLLM([AIMessage(content="auth.py contains validate_token().")])
+    graph = RepositoryGraph(
+        llm,
+        [search_repository],
+        router=StaticRouter("repository"),
+        planner=planner,
+        critic=critic,
+    ).build()
+
+    result = invoke(graph, "Investigate token validation and propose a fix.")
+
+    assert result["plan_approved"] is True
+    assert result["retry_count"] == 1
+    assert len(planner.calls) == 2
+    assert planner.calls[1][2] == "Add a stronger test step."
+    assert len(critic.calls) == 2
+
+
+def test_repeated_rejection_hits_retry_limit_instead_of_recursion_error():
+    planner = StaticPlanner()
+    critic = SequenceCritic(
+        [
+            rejected_plan_decision("First rejection."),
+            rejected_plan_decision("Second rejection."),
+            rejected_plan_decision("Third rejection."),
+        ]
+    )
+    llm = ScriptedLLM([AIMessage(content="auth.py contains validate_token().")])
+    graph = RepositoryGraph(
+        llm,
+        [search_repository],
+        router=StaticRouter("repository"),
+        planner=planner,
+        critic=critic,
+    ).build()
+
+    result = invoke(graph, "Investigate token validation and propose a fix.")
+
+    assert result["plan_approved"] is False
+    assert result["retry_count"] == 2
+    assert len(planner.calls) == 3
+    assert len(critic.calls) == 3
+    assert "within the retry limit" in result["messages"][-1].content

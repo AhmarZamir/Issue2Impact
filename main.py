@@ -27,7 +27,7 @@ an implementation plan to make authentication handling safer.
 
 
 def build_repository_graph(repo_path: str = "demo_repo"):
-    """Build the complete Phase 7 routed graph and retrieval dependencies."""
+    """Build the Phase 8 routed graph and retrieval dependencies."""
     if vector_store_exists():
         vector_store = load_vector_store()
     else:
@@ -47,14 +47,12 @@ def build_repository_graph(repo_path: str = "demo_repo"):
 def extract_text(content):
     if isinstance(content, str):
         return content
-
     if isinstance(content, list):
         return "\n".join(
             block.get("text", "")
             for block in content
             if isinstance(block, dict)
         )
-
     return str(content)
 
 
@@ -64,12 +62,15 @@ def run(query: str, show_trace: bool = False):
     result = graph.invoke(
         {
             "user_query": query,
+            "retry_count": 0,
             "messages": [
                 SystemMessage(content=REPOSITORY_AGENT_PROMPT),
                 HumanMessage(content=query),
             ],
         },
-        config={"recursion_limit": 12},
+        # Phase 8 legitimately traverses more nodes because of critic/reflection.
+        # The graph's own retry_count/MAX_RETRIES is the primary loop guard.
+        config={"recursion_limit": 30},
     )
 
     if show_trace:
@@ -82,6 +83,12 @@ def run(query: str, show_trace: bool = False):
 
         print("\n=== PLAN ===")
         print(result.get("plan", "N/A"))
+
+        print("\n=== CRITIC ===")
+        print("Approved:", result.get("plan_approved"))
+        print("Needs more evidence:", result.get("needs_more_evidence"))
+        print("Feedback:", result.get("critic_feedback", "N/A"))
+        print("Retries:", result.get("retry_count", 0))
 
         print("\n=== MESSAGE TRACE ===")
         for message in result["messages"]:
@@ -99,8 +106,8 @@ if __name__ == "__main__":
         "--trace",
         action="store_true",
         help=(
-            "Print routing, investigation, plan, and every message in the "
-            "agent/tool workflow."
+            "Print routing, investigation, plan, critic state, and every message "
+            "in the agent/tool workflow."
         ),
     )
     args = parser.parse_args()

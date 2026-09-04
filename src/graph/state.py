@@ -22,6 +22,12 @@ class AgentState(TypedDict, total=False):
     route: RouteType
     route_reason: str
 
-    # Phase 7 worker handoff artifacts
+    # Investigator/planner handoff artifacts
     investigation: str
     plan: str
+
+    # Phase 8 critic + reflection state
+    critic_feedback: str
+    plan_approved: bool
+    needs_more_evidence: bool
+    retry_count: int
