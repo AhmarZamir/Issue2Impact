@@ -20,12 +20,14 @@ from src.tools.repository_tools import (
 
 
 DEFAULT_QUERY = """
-what is Software Engineering?
+Users sometimes remain authenticated when an invalid token is supplied.
+Investigate how token validation and logout work in this repository and give me
+an implementation plan to make authentication handling safer.
 """.strip()
 
 
 def build_repository_graph(repo_path: str = "demo_repo"):
-    """Build the complete Phase 6 routed graph and retrieval dependencies."""
+    """Build the complete Phase 7 routed graph and retrieval dependencies."""
     if vector_store_exists():
         vector_store = load_vector_store()
     else:
@@ -67,7 +69,7 @@ def run(query: str, show_trace: bool = False):
                 HumanMessage(content=query),
             ],
         },
-        config={"recursion_limit": 10},
+        config={"recursion_limit": 12},
     )
 
     if show_trace:
@@ -75,6 +77,13 @@ def run(query: str, show_trace: bool = False):
         print("Route:", result.get("route"))
         print("Reason:", result.get("route_reason"))
 
+        print("\n=== INVESTIGATION ===")
+        print(result.get("investigation", "N/A"))
+
+        print("\n=== PLAN ===")
+        print(result.get("plan", "N/A"))
+
+        print("\n=== MESSAGE TRACE ===")
         for message in result["messages"]:
             print(f"\n--- {type(message).__name__} ---")
             print(message)
@@ -89,7 +98,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trace",
         action="store_true",
-        help="Print the routing decision and every message in the agent/tool loop.",
+        help=(
+            "Print routing, investigation, plan, and every message in the "
+            "agent/tool workflow."
+        ),
     )
     args = parser.parse_args()
 

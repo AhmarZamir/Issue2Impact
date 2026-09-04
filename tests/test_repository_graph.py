@@ -31,6 +31,26 @@ class StaticRouter:
         return SimpleNamespace(route=self.route_name, reason=self.reason)
 
 
+class StaticPlanner:
+    """Deterministic planner used to test investigator-to-planner handoff."""
+
+    def __init__(self):
+        self.calls = []
+
+    def create_plan(self, issue, investigation):
+        self.calls.append((issue, investigation))
+        return SimpleNamespace(
+            summary="Tighten token validation and logout behavior.",
+            files_to_change=["auth.py"],
+            steps=[
+                "Update token validation behavior.",
+                "Keep logout behavior consistent with validation.",
+            ],
+            tests=["Add invalid-token logout coverage."],
+            risks=["Authentication behavior may regress for valid tokens."],
+        )
+
+
 @tool
 def search_repository(query: str) -> str:
     """Search test repository evidence."""
@@ -53,7 +73,7 @@ def invoke(graph, query):
             "user_query": query,
             "messages": [HumanMessage(content=query)],
         },
-        config={"recursion_limit": 10},
+        config={"recursion_limit": 12},
     )
 
 
@@ -63,6 +83,7 @@ def test_router_sends_general_question_to_general_node():
         llm,
         [search_repository],
         router=StaticRouter("general", "general programming question"),
+        planner=StaticPlanner(),
     ).build()
 
     result = invoke(graph, "What is testing?")
@@ -70,6 +91,8 @@ def test_router_sends_general_question_to_general_node():
     assert result["route"] == "general"
     assert result["route_reason"] == "general programming question"
     assert result["messages"][-1].content == "Unit tests verify behavior."
+    assert "investigation" not in result
+    assert "plan" not in result
     assert not any(isinstance(message, ToolMessage) for message in result["messages"])
 
 
@@ -79,44 +102,53 @@ def test_router_sends_unsupported_question_to_deterministic_response():
         llm,
         [search_repository],
         router=StaticRouter("unsupported"),
+        planner=StaticPlanner(),
     ).build()
 
     result = invoke(graph, "Write a romantic poem.")
 
     assert result["route"] == "unsupported"
     assert "outside Issue2Impact" in result["messages"][-1].content
+    assert "investigation" not in result
+    assert "plan" not in result
     assert not any(isinstance(message, ToolMessage) for message in result["messages"])
 
 
-def test_repository_route_executes_search_and_returns_to_agent():
+def test_repository_route_hands_investigation_to_planner():
+    planner = StaticPlanner()
     llm = ScriptedLLM(
         [
             AIMessage(
                 content="",
                 tool_calls=[tool_call("search_repository", {"query": "login"}, "1")],
             ),
-            AIMessage(content="Login is implemented in auth.py."),
+            AIMessage(content="auth.py contains the login implementation."),
         ]
     )
     graph = RepositoryGraph(
         llm,
         [search_repository],
         router=StaticRouter("repository"),
+        planner=planner,
     ).build()
 
-    result = invoke(graph, "Where is login?")
+    result = invoke(graph, "Investigate login behavior and propose a fix.")
 
     assert result["route"] == "repository"
-    assert [type(message).__name__ for message in result["messages"]] == [
-        "HumanMessage",
-        "AIMessage",
-        "ToolMessage",
-        "AIMessage",
+    assert result["investigation"] == "auth.py contains the login implementation."
+    assert planner.calls == [
+        (
+            "Investigate login behavior and propose a fix.",
+            "auth.py contains the login implementation.",
+        )
     ]
-    assert "auth.py" in result["messages"][2].content
+    assert "Implementation Plan" in result["plan"]
+    assert "auth.py" in result["plan"]
+    assert result["messages"][-1].content == result["plan"]
 
 
-def test_repository_route_supports_multi_step_tool_use():
+def test_repository_route_supports_multi_step_tool_use_before_planning():
+    planner = StaticPlanner()
     llm = ScriptedLLM(
         [
             AIMessage(
@@ -133,20 +165,28 @@ def test_repository_route_supports_multi_step_tool_use():
                     )
                 ],
             ),
-            AIMessage(content="Token validation is in auth.py."),
+            AIMessage(
+                content=(
+                    "auth.py contains validate_token() and logout(); logout depends "
+                    "on token validation."
+                )
+            ),
         ]
     )
     graph = RepositoryGraph(
         llm,
         [search_repository, read_repository_file],
         router=StaticRouter("repository"),
+        planner=planner,
     ).build()
 
-    result = invoke(graph, "Investigate token validation.")
+    result = invoke(graph, "Investigate token validation and logout safety.")
 
     tool_messages = [
         message for message in result["messages"] if isinstance(message, ToolMessage)
     ]
     assert len(tool_messages) == 2
     assert "contents of auth.py" in tool_messages[-1].content
-    assert result["messages"][-1].content == "Token validation is in auth.py."
+    assert "validate_token()" in result["investigation"]
+    assert result["plan"].startswith("Implementation Plan")
+    assert len(planner.calls) == 1
