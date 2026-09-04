@@ -26,8 +26,12 @@ class AgentState(TypedDict, total=False):
     investigation: str
     plan: str
 
-    # Phase 8 critic + reflection state
+    # Critic + reflection state
     critic_feedback: str
     plan_approved: bool
     needs_more_evidence: bool
     retry_count: int
+
+    # Phase 9 human-in-the-loop state
+    human_approved: bool
+    human_feedback: str

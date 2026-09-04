@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import interrupt
 
 from src.agents.critic import CriticAgent
 from src.agents.planner import PlannerAgent
@@ -12,7 +13,7 @@ MAX_RETRIES = 2
 
 
 class RepositoryGraph:
-    """Build the Phase 8 routed investigator -> planner -> critic workflow."""
+    """Build the Phase 9 routed workflow with reflection and human approval."""
 
     def __init__(self, llm, tools, router=None, planner=None, critic=None):
         self.llm = llm
@@ -154,13 +155,10 @@ class RepositoryGraph:
     def after_critic(state: AgentState):
         if state.get("plan_approved", False):
             return "approved"
-
         if state.get("retry_count", 0) >= MAX_RETRIES:
             return "max_retries"
-
         if state.get("needs_more_evidence", False):
             return "reinvestigate"
-
         return "revise_plan"
 
     @staticmethod
@@ -188,15 +186,63 @@ class RepositoryGraph:
         }
 
     @staticmethod
-    def approved_node(state: AgentState):
+    def human_approval_node(state: AgentState):
+        decision = interrupt(
+            {
+                "type": "human_approval",
+                "issue": state["user_query"],
+                "investigation": state["investigation"],
+                "plan": state["plan"],
+                "critic_feedback": state.get("critic_feedback", "Approved."),
+                "message": "The Critic approved this plan. Approve or reject it.",
+            }
+        )
+
+        if not isinstance(decision, dict):
+            decision = {"approved": bool(decision), "feedback": ""}
+
+        return {
+            "human_approved": bool(decision.get("approved", False)),
+            "human_feedback": str(decision.get("feedback", "")).strip(),
+        }
+
+    @staticmethod
+    def after_human_approval(state: AgentState):
+        return "approved" if state.get("human_approved", False) else "rejected"
+
+    @staticmethod
+    def human_rejection_node(state: AgentState):
+        feedback = state.get("human_feedback") or "The human rejected the plan."
+        return {
+            "critic_feedback": (
+                "Human review rejected the previous implementation plan.\n\n"
+                f"Human feedback:\n{feedback}"
+            )
+        }
+
+    @staticmethod
+    def human_retry_node(state: AgentState):
+        return {"retry_count": state.get("retry_count", 0) + 1}
+
+    @staticmethod
+    def after_human_retry(state: AgentState):
+        if state.get("retry_count", 0) >= MAX_RETRIES:
+            return "max_retries"
+        return "revise"
+
+    @staticmethod
+    def finalize_node(state: AgentState):
+        human_feedback = state.get("human_feedback") or "Approved without additional feedback."
         return {
             "messages": [
                 AIMessage(
                     content=(
-                        "Critic-approved implementation plan\n\n"
+                        "Human-approved implementation plan\n\n"
                         f"{state['plan']}\n\n"
                         "Critic review:\n"
-                        f"{state.get('critic_feedback', 'Approved.')}"
+                        f"{state.get('critic_feedback', 'Approved.')}\n\n"
+                        "Human review:\n"
+                        f"{human_feedback}"
                     )
                 )
             ]
@@ -208,9 +254,9 @@ class RepositoryGraph:
             "messages": [
                 AIMessage(
                     content=(
-                        "The workflow could not produce a critic-approved implementation "
-                        "plan within the retry limit.\n\n"
-                        "Latest critic feedback:\n"
+                        "The workflow could not reach an approved implementation plan "
+                        "within the retry limit.\n\n"
+                        "Latest review feedback:\n"
                         f"{state.get('critic_feedback', 'N/A')}\n\n"
                         "Latest plan:\n"
                         f"{state.get('plan', 'N/A')}"
@@ -219,7 +265,7 @@ class RepositoryGraph:
             ]
         }
 
-    def build(self):
+    def build(self, checkpointer=None):
         graph = StateGraph(AgentState)
 
         graph.add_node("router", self.router_node)
@@ -231,7 +277,10 @@ class RepositoryGraph:
         graph.add_node("plan_retry", self.plan_retry_node)
         graph.add_node("evidence_retry", self.evidence_retry_node)
         graph.add_node("reinvestigation_context", self.reinvestigation_context_node)
-        graph.add_node("approved", self.approved_node)
+        graph.add_node("human_approval", self.human_approval_node)
+        graph.add_node("human_rejection", self.human_rejection_node)
+        graph.add_node("human_retry", self.human_retry_node)
+        graph.add_node("finalize", self.finalize_node)
         graph.add_node("retry_exhausted", self.retry_exhausted_node)
         graph.add_node("general", self.general_node)
         graph.add_node("unsupported", self.unsupported_node)
@@ -264,7 +313,7 @@ class RepositoryGraph:
             "critic",
             self.after_critic,
             {
-                "approved": "approved",
+                "approved": "human_approval",
                 "revise_plan": "plan_retry",
                 "reinvestigate": "evidence_retry",
                 "max_retries": "retry_exhausted",
@@ -275,9 +324,27 @@ class RepositoryGraph:
         graph.add_edge("evidence_retry", "reinvestigation_context")
         graph.add_edge("reinvestigation_context", "agent")
 
-        graph.add_edge("approved", END)
+        graph.add_conditional_edges(
+            "human_approval",
+            self.after_human_approval,
+            {
+                "approved": "finalize",
+                "rejected": "human_rejection",
+            },
+        )
+        graph.add_edge("human_rejection", "human_retry")
+        graph.add_conditional_edges(
+            "human_retry",
+            self.after_human_retry,
+            {
+                "revise": "planner",
+                "max_retries": "retry_exhausted",
+            },
+        )
+
+        graph.add_edge("finalize", END)
         graph.add_edge("retry_exhausted", END)
         graph.add_edge("general", END)
         graph.add_edge("unsupported", END)
 
-        return graph.compile()
+        return graph.compile(checkpointer=checkpointer)

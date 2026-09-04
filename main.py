@@ -1,6 +1,9 @@
 import argparse
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from src.graph.repository_graph import RepositoryGraph
 from src.ingestion.chunking import chunk_documents
@@ -26,8 +29,8 @@ an implementation plan to make authentication handling safer.
 """.strip()
 
 
-def build_repository_graph(repo_path: str = "demo_repo"):
-    """Build the Phase 8 routed graph and retrieval dependencies."""
+def build_repository_graph(repo_path: str = "demo_repo", checkpointer=None):
+    """Build the Phase 9 graph with retrieval dependencies and persistence."""
     if vector_store_exists():
         vector_store = load_vector_store()
     else:
@@ -41,7 +44,7 @@ def build_repository_graph(repo_path: str = "demo_repo"):
     return RepositoryGraph(
         llm=get_llm(),
         tools=[repository_search, read_repository_file],
-    ).build()
+    ).build(checkpointer=checkpointer)
 
 
 def extract_text(content):
@@ -56,8 +59,44 @@ def extract_text(content):
     return str(content)
 
 
-def run(query: str, show_trace: bool = False):
-    graph = build_repository_graph()
+def print_trace(result):
+    print("\n=== ROUTING ===")
+    print("Route:", result.get("route"))
+    print("Reason:", result.get("route_reason"))
+
+    print("\n=== INVESTIGATION ===")
+    print(result.get("investigation", "N/A"))
+
+    print("\n=== PLAN ===")
+    print(result.get("plan", "N/A"))
+
+    print("\n=== CRITIC ===")
+    print("Approved:", result.get("plan_approved"))
+    print("Needs more evidence:", result.get("needs_more_evidence"))
+    print("Feedback:", result.get("critic_feedback", "N/A"))
+    print("Retries:", result.get("retry_count", 0))
+
+    print("\n=== HUMAN REVIEW ===")
+    print("Approved:", result.get("human_approved"))
+    print("Feedback:", result.get("human_feedback", "N/A"))
+
+    print("\n=== MESSAGE TRACE ===")
+    for message in result.get("messages", []):
+        print(f"\n--- {type(message).__name__} ---")
+        print(message)
+
+
+def run(query: str, show_trace: bool = False, input_fn=input, thread_id: str | None = None):
+    """Run the graph and handle any human-approval interrupts in the terminal."""
+    checkpointer = InMemorySaver()
+    graph = build_repository_graph(checkpointer=checkpointer)
+
+    config = {
+        "configurable": {
+            "thread_id": thread_id or f"issue2impact-{uuid4()}",
+        },
+        "recursion_limit": 30,
+    }
 
     result = graph.invoke(
         {
@@ -68,32 +107,40 @@ def run(query: str, show_trace: bool = False):
                 HumanMessage(content=query),
             ],
         },
-        # Phase 8 legitimately traverses more nodes because of critic/reflection.
-        # The graph's own retry_count/MAX_RETRIES is the primary loop guard.
-        config={"recursion_limit": 30},
+        config=config,
     )
 
+    while result.get("__interrupt__"):
+        interrupt_info = result["__interrupt__"][0].value
+
+        print("\n=== HUMAN APPROVAL REQUIRED ===")
+        print(interrupt_info.get("message", "Review the proposed plan."))
+        print("\nPlan:\n")
+        print(interrupt_info.get("plan", "N/A"))
+        print("\nCritic feedback:\n")
+        print(interrupt_info.get("critic_feedback", "N/A"))
+
+        answer = input_fn("\nApprove plan? [y/n]: ").strip().lower()
+        approved = answer in {"y", "yes"}
+
+        feedback = ""
+        if not approved:
+            feedback = input_fn("Why are you rejecting it? ").strip()
+        else:
+            feedback = "Approved by human reviewer."
+
+        result = graph.invoke(
+            Command(
+                resume={
+                    "approved": approved,
+                    "feedback": feedback,
+                }
+            ),
+            config=config,
+        )
+
     if show_trace:
-        print("\n=== ROUTING ===")
-        print("Route:", result.get("route"))
-        print("Reason:", result.get("route_reason"))
-
-        print("\n=== INVESTIGATION ===")
-        print(result.get("investigation", "N/A"))
-
-        print("\n=== PLAN ===")
-        print(result.get("plan", "N/A"))
-
-        print("\n=== CRITIC ===")
-        print("Approved:", result.get("plan_approved"))
-        print("Needs more evidence:", result.get("needs_more_evidence"))
-        print("Feedback:", result.get("critic_feedback", "N/A"))
-        print("Retries:", result.get("retry_count", 0))
-
-        print("\n=== MESSAGE TRACE ===")
-        for message in result["messages"]:
-            print(f"\n--- {type(message).__name__} ---")
-            print(message)
+        print_trace(result)
 
     final_content = result["messages"][-1].content
     return extract_text(final_content)
@@ -106,8 +153,8 @@ if __name__ == "__main__":
         "--trace",
         action="store_true",
         help=(
-            "Print routing, investigation, plan, critic state, and every message "
-            "in the agent/tool workflow."
+            "Print routing, investigation, plan, critic state, human-review state, "
+            "and every message in the workflow."
         ),
     )
     args = parser.parse_args()

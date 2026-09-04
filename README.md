@@ -2,7 +2,7 @@
 
 Issue2Impact is a learning-focused Agentic AI project for investigating software issues using repository-grounded evidence.
 
-It currently combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, retrieval evaluation, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic review, reflection, and bounded self-healing retries.
+It currently combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, retrieval evaluation, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic review, reflection, bounded self-healing retries, and human-in-the-loop approval.
 
 ## Current phases
 
@@ -14,8 +14,9 @@ It currently combines repository ingestion, code-aware chunking, local embedding
 - Phase 6: router agent, richer graph state, structured route decisions, general/unsupported branches, and context-aware execution
 - Phase 7: repository investigator -> planner handoff, investigation state, structured implementation plans, and multi-agent specialization
 - Phase 8: critic agent, reflection, plan revision, evidence re-investigation, bounded retries, and safe termination
+- Phase 9: human-in-the-loop approval with LangGraph interrupts, checkpointed state, thread IDs, resume commands, and human-guided plan revision
 
-## Phase 8 workflow
+## Phase 9 workflow
 
 ```text
 START
@@ -34,21 +35,29 @@ Router
   │                Critic
   │          ┌────────┼──────────┐
   │          ↓        ↓          ↓
-  │      Approved   Revise   More Evidence
-  │          ↓        ↓          ↓
-  │         END   Plan Retry  Evidence Retry
-  │                   ↓          ↓
-  │                Planner   Investigator
+  │      Weak Plan  More       Critic Approved
+  │          ↓      Evidence          ↓
+  │       Planner      ↓        Human Approval
+  │                    ↓        ↙            ↘
+  │              Investigator Reject       Approve
+  │                              ↓            ↓
+  │                       Human Feedback   Finalize
+  │                              ↓            ↓
+  │                           Planner        END
   │
   ├── general → General Software Node → END
   └── unsupported → Deterministic Scope Response → END
 ```
 
-The Phase 8 critic checks grounding, relevance, actionability, tests, risks, and whether the repository evidence is sufficient. A weak plan is sent back to the Planner with critic feedback. Missing evidence is sent back to the Repository Investigator with the critic's reason so the workflow can investigate again before replanning.
+The Critic is still responsible for technical quality: grounding, relevance, actionability, tests, risk, and evidence sufficiency. Once the Critic approves a plan, the graph no longer finishes automatically. It pauses with LangGraph `interrupt()` and waits for a human decision.
 
-Retries are intentionally bounded with `MAX_RETRIES = 2`. LangGraph also uses a larger recursion limit as an emergency graph-level guard, while the workflow's own retry state is the primary stopping condition. This prevents uncontrolled reflection loops and avoids accepting weak plans indefinitely.
+Human approval is implemented as a real workflow pause/resume boundary rather than a blocking `input()` inside a graph node. The CLI handles the user interface outside the node, then resumes the exact same graph execution with `Command(resume=...)`.
 
-The planner still does not modify code. Phase 8 only investigates, plans, critiques, and self-corrects.
+Phase 9 uses `InMemorySaver` and a `thread_id` so LangGraph can preserve the workflow state while paused. The same thread ID is reused for the resume command. This preserves the investigation, plan, critic feedback, retry count, and current graph position.
+
+If the human rejects the plan, the feedback is sent back to the Planner. The revised plan is reviewed by the Critic again and, if technically approved, is presented to the human again. Human rejections share the existing bounded retry budget so the workflow cannot loop indefinitely.
+
+The system still does not modify repository code. The approved output is an evidence-grounded implementation plan.
 
 ## Setup
 
@@ -61,14 +70,22 @@ pip install -r requirements.txt
 
 Copy `.env.example` to `.env`, add your Google API key, and select a Gemini model available to your account.
 
+## Run
+
 ```bash
 python main.py --trace
 python main.py "Investigate token validation and logout and propose a safer implementation plan." --trace
-python main.py "What is dependency injection?" --trace
-python main.py "Write a romantic poem." --trace
 ```
 
-`--trace` displays routing, investigation, plan, critic approval state, critic feedback, evidence requests, retry count, and the full message/tool sequence.
+When the Critic approves a repository plan, the terminal will display the plan and ask:
+
+```text
+Approve plan? [y/n]:
+```
+
+If you reject it, you can enter feedback. The graph resumes from the saved checkpoint, revises the plan, reviews it again, and can pause for another human decision.
+
+General programming questions and unsupported requests do not enter the human-approval path.
 
 ## Tests
 
@@ -76,4 +93,4 @@ python main.py "Write a romantic poem." --trace
 pytest
 ```
 
-The graph tests use deterministic fake models, routers, planners, and critics. They validate immediate approval, plan revision, evidence re-investigation, retry exhaustion, and the non-repository routes without requiring a live model API key or quota.
+The graph tests use deterministic fake models, routers, planners, and critics. Phase 9 tests validate that critic approval pauses instead of finishing, approval resumes and finalizes the same thread, rejection feeds human feedback back into the Planner, repeated human rejection respects the retry limit, and non-repository routes bypass HITL.
