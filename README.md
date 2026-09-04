@@ -2,7 +2,7 @@
 
 Issue2Impact is a learning-focused Agentic AI project for investigating software issues using repository-grounded evidence.
 
-It currently combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, retrieval evaluation, tool calling, routed LangGraph orchestration, repository investigation, and structured implementation planning.
+It currently combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, retrieval evaluation, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic review, reflection, and bounded self-healing retries.
 
 ## Current phases
 
@@ -13,8 +13,9 @@ It currently combines repository ingestion, code-aware chunking, local embedding
 - Phase 5: LangGraph state, agent/tool nodes, conditional routing, and cycles
 - Phase 6: router agent, richer graph state, structured route decisions, general/unsupported branches, and context-aware execution
 - Phase 7: repository investigator -> planner handoff, investigation state, structured implementation plans, and multi-agent specialization
+- Phase 8: critic agent, reflection, plan revision, evidence re-investigation, bounded retries, and safe termination
 
-## Phase 7 workflow
+## Phase 8 workflow
 
 ```text
 START
@@ -30,18 +31,24 @@ Router
   │    ↓             ↓
   │ Investigator   Planner
   │                  ↓
-  │                 END
+  │                Critic
+  │          ┌────────┼──────────┐
+  │          ↓        ↓          ↓
+  │      Approved   Revise   More Evidence
+  │          ↓        ↓          ↓
+  │         END   Plan Retry  Evidence Retry
+  │                   ↓          ↓
+  │                Planner   Investigator
   │
   ├── general → General Software Node → END
   └── unsupported → Deterministic Scope Response → END
 ```
 
-The repository branch now separates two responsibilities:
+The Phase 8 critic checks grounding, relevance, actionability, tests, risks, and whether the repository evidence is sufficient. A weak plan is sent back to the Planner with critic feedback. Missing evidence is sent back to the Repository Investigator with the critic's reason so the workflow can investigate again before replanning.
 
-- **Repository Investigator**: searches and reads repository evidence, then produces a concise evidence-backed investigation.
-- **Planner Agent**: receives only the original issue plus the investigation and produces a structured implementation plan with files, ordered steps, tests, and risks.
+Retries are intentionally bounded with `MAX_RETRIES = 2`. LangGraph also uses a larger recursion limit as an emergency graph-level guard, while the workflow's own retry state is the primary stopping condition. This prevents uncontrolled reflection loops and avoids accepting weak plans indefinitely.
 
-The planner does not modify code and does not receive repository tools. This keeps evidence gathering and solution planning separated and makes the handoff explicit in LangGraph state.
+The planner still does not modify code. Phase 8 only investigates, plans, critiques, and self-corrects.
 
 ## Setup
 
@@ -61,7 +68,7 @@ python main.py "What is dependency injection?" --trace
 python main.py "Write a romantic poem." --trace
 ```
 
-`--trace` displays the routing decision, captured investigation, final plan, and the full message/tool sequence. Graph execution uses a recursion limit to prevent uncontrolled tool loops.
+`--trace` displays routing, investigation, plan, critic approval state, critic feedback, evidence requests, retry count, and the full message/tool sequence.
 
 ## Tests
 
@@ -69,4 +76,4 @@ python main.py "Write a romantic poem." --trace
 pytest
 ```
 
-The graph tests use deterministic fake models, routers, and planners so the routing branches, repository tool execution, multi-step investigation, investigator-to-planner handoff, and structured plan formatting can be validated without a live API key or model quota.
+The graph tests use deterministic fake models, routers, planners, and critics. They validate immediate approval, plan revision, evidence re-investigation, retry exhaustion, and the non-repository routes without requiring a live model API key or quota.

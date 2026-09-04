@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 
 from src.graph.repository_graph import RepositoryGraph
@@ -58,10 +58,6 @@ def search_repository(query: str) -> str:
     return f"auth.py matches {query}"
 
 
-def tool_call(name, args, call_id):
-    return {"name": name, "args": args, "id": call_id, "type": "tool_call"}
-
-
 def invoke(graph, query):
     return graph.invoke(
         {
@@ -86,6 +82,14 @@ def rejected_plan_decision(feedback="Plan needs revision."):
         approved=False,
         feedback=feedback,
         needs_more_evidence=False,
+    )
+
+
+def rejected_evidence_decision(feedback="More repository evidence is required."):
+    return SimpleNamespace(
+        approved=False,
+        feedback=feedback,
+        needs_more_evidence=True,
     )
 
 
@@ -152,6 +156,38 @@ def test_plan_revision_loop_stops_after_critic_approval():
     assert len(planner.calls) == 2
     assert planner.calls[1][2] == "Add a stronger test step."
     assert len(critic.calls) == 2
+
+
+def test_missing_evidence_routes_back_to_investigator_then_replans():
+    planner = StaticPlanner()
+    critic = SequenceCritic(
+        [
+            rejected_evidence_decision("Inspect logout behavior before changing auth.py."),
+            approved_decision("Additional evidence makes the plan acceptable."),
+        ]
+    )
+    llm = ScriptedLLM(
+        [
+            AIMessage(content="auth.py contains validate_token()."),
+            AIMessage(content="auth.py also contains logout(), which calls validate_token()."),
+        ]
+    )
+    graph = RepositoryGraph(
+        llm,
+        [search_repository],
+        router=StaticRouter("repository"),
+        planner=planner,
+        critic=critic,
+    ).build()
+
+    result = invoke(graph, "Investigate token validation and logout safety.")
+
+    assert result["plan_approved"] is True
+    assert result["retry_count"] == 1
+    assert len(planner.calls) == 2
+    assert len(critic.calls) == 2
+    assert "logout()" in result["investigation"]
+    assert planner.calls[1][2] == "Inspect logout behavior before changing auth.py."
 
 
 def test_repeated_rejection_hits_retry_limit_instead_of_recursion_error():
