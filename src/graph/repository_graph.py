@@ -4,7 +4,7 @@ from langgraph.prebuilt import ToolNode
 
 from src.agents.router import RouterAgent
 from src.graph.state import AgentState
-
+from src.agents.planner import PlannerAgent
 
 class RepositoryGraph:
     """Build the Phase 6 routed Issue2Impact workflow."""
@@ -14,7 +14,9 @@ class RepositoryGraph:
         self.tools = tools
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         self.router = router or RouterAgent(self.llm)
+        self.planner =PlannerAgent(self.llm)
 
+        
     def router_node(self, state: AgentState):
         """Classify the request and store the routing decision in graph state."""
         query = state.get("user_query")

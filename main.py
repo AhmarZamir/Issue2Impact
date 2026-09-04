@@ -20,8 +20,7 @@ from src.tools.repository_tools import (
 
 
 DEFAULT_QUERY = """
-Investigate the authentication flow. Identify the relevant implementation file,
-inspect it, and explain how login and token validation are connected.
+what is Software Engineering?
 """.strip()
 
 
