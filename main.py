@@ -26,7 +26,7 @@ inspect it, and explain how login and token validation are connected.
 
 
 def build_repository_graph(repo_path: str = "demo_repo"):
-    """Build the complete Phase 5 graph and its retrieval dependencies."""
+    """Build the complete Phase 6 routed graph and retrieval dependencies."""
     if vector_store_exists():
         vector_store = load_vector_store()
     else:
@@ -43,32 +43,6 @@ def build_repository_graph(repo_path: str = "demo_repo"):
     ).build()
 
 
-def run(query: str, show_trace: bool = False):
-    graph = build_repository_graph()
-    result = graph.invoke(
-        {
-            "messages": [
-                SystemMessage(content=REPOSITORY_AGENT_PROMPT),
-                HumanMessage(content=query),
-            ]
-        },
-        config={"recursion_limit": 10},
-    )
-
-
-
-
-
-    if show_trace:
-        for message in result["messages"]:
-            print(f"\n--- {type(message).__name__} ---")
-            print(message)
-
-    final_content = result["messages"][-1].content
-    return extract_text(final_content)
-
-
-
 def extract_text(content):
     if isinstance(content, str):
         return content
@@ -83,6 +57,32 @@ def extract_text(content):
     return str(content)
 
 
+def run(query: str, show_trace: bool = False):
+    graph = build_repository_graph()
+
+    result = graph.invoke(
+        {
+            "user_query": query,
+            "messages": [
+                SystemMessage(content=REPOSITORY_AGENT_PROMPT),
+                HumanMessage(content=query),
+            ],
+        },
+        config={"recursion_limit": 10},
+    )
+
+    if show_trace:
+        print("\n=== ROUTING ===")
+        print("Route:", result.get("route"))
+        print("Reason:", result.get("route_reason"))
+
+        for message in result["messages"]:
+            print(f"\n--- {type(message).__name__} ---")
+            print(message)
+
+    final_content = result["messages"][-1].content
+    return extract_text(final_content)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Issue2Impact agent graph.")
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trace",
         action="store_true",
-        help="Print every message in the agent/tool loop.",
+        help="Print the routing decision and every message in the agent/tool loop.",
     )
     args = parser.parse_args()
 
