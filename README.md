@@ -1,39 +1,33 @@
 # Issue2Impact
 
-Issue2Impact is an Agentic AI system for investigating software issues using repository-grounded evidence.
+Issue2Impact is an Agentic AI system that investigates software issues against real source-code repositories, builds an evidence-grounded implementation plan, critiques its own work, retries when evidence is weak, and pauses for human approval before finalizing the result.
 
-It combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic reflection, bounded self-healing retries, human approval gates, dynamic repository input, and a Streamlit interface.
+It is designed as an engineering workflow rather than a generic chatbot.
 
-## What it can inspect
+## Why this project matters
 
-Issue2Impact can prepare and inspect three repository sources:
+Software issue analysis is rarely a one-shot retrieval problem. A useful system has to decide whether repository evidence is needed, search and read the right files, separate evidence gathering from planning, challenge weak conclusions, recover from missing evidence, and keep a human in control of the final plan.
 
-- a local repository folder
-- a public GitHub repository URL
-- a ZIP archive containing a repository
+Issue2Impact demonstrates that full lifecycle with LangGraph orchestration, repository-specific RAG, specialized agents, reflection, bounded self-healing, and human-in-the-loop approval.
 
-Every source is resolved to a local repository path before the agent workflow starts. The repository reader and retrieval tools are then created specifically for that repository.
+## Product capabilities
 
-Repository indexes are isolated under `data/vector_stores/<repository-id>/`. The repository ID includes a source fingerprint, so different repositories do not share the same Chroma index and local source changes create a fresh index identity.
+- Inspect a local repository folder
+- Clone and inspect a public GitHub repository
+- Upload and inspect a repository ZIP
+- Build an isolated Chroma index per repository/source fingerprint
+- Search repository chunks with embeddings and cross-encoder reranking
+- Safely read full repository files without escaping the selected repository root
+- Route general, repository-specific, and unsupported requests
+- Investigate repository behavior with tool-calling agents
+- Produce structured implementation plans
+- Critique grounding, relevance, actionability, tests, risks, and evidence sufficiency
+- Retry planning or repository investigation when the Critic rejects a result
+- Pause for human approval with LangGraph interrupts/checkpointing
+- Accept human rejection feedback and revise the plan
+- Use either a CLI or a polished Streamlit interface
 
-GitHub repositories are cloned into `workspace/repos/`. Existing cached clones are fast-forwarded when possible. Git must be installed and available on `PATH` for GitHub URL mode.
-
-## Current capabilities
-
-- repository loading and code-aware chunking
-- Hugging Face embeddings and Chroma vector storage
-- candidate retrieval, reranking, and retrieval evaluation
-- conditional tool calling with repository search and safe file reading
-- LangGraph state, routing, cycles, and multi-agent handoffs
-- Repository Investigator and structured Planner Agent
-- Critic Agent with plan revision and evidence re-investigation
-- bounded retry/self-healing loops
-- human-in-the-loop approval using LangGraph interrupts, checkpoints, thread IDs, and resume commands
-- dynamic local/GitHub/ZIP repository input
-- repository-specific vector indexes and read tools
-- Streamlit UI with repository loading, workflow status, investigation results, critic review, and human approval controls
-
-## Workflow
+## Architecture
 
 ```text
 Repository source
@@ -42,7 +36,9 @@ Local folder / GitHub / ZIP
       ↓
 RepositoryContext
       ↓
-Repository-specific index + tools
+Loader → Chunker → Embeddings → Repository-specific Chroma index
+      ↓
+Repository search/read tools
       ↓
 Router
   ├── general → General Software Node → END
@@ -71,72 +67,98 @@ Router
                                      END
 ```
 
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the component-level breakdown.
+
+## Project structure
+
+```text
+Issue2Impact/
+├── main.py
+├── streamlit_app.py
+├── demo_repo/
+├── src/
+│   ├── agents/
+│   ├── graph/
+│   ├── ingestion/
+│   ├── llm/
+│   ├── prompts/
+│   ├── repository/
+│   ├── retrieval/
+│   ├── services/
+│   ├── tools/
+│   └── ui/
+├── tests/
+├── docs/
+└── requirements.txt
+```
+
+`src/services/workflow.py` is the application-facing service layer. It centralizes repository preparation, graph construction, workflow configuration, interrupt handling, and resume validation so the CLI and UI do not own core agent logic.
+
 ## Supported source files
 
-The loader handles common Python, JavaScript/TypeScript, Java, C/C++, C#, Go, Rust, PHP, Ruby, Swift, Kotlin, Scala, HTML/CSS, SQL, shell, configuration, Markdown, JSON, YAML, XML, Dockerfile, and Makefile content. Large files, binary/invalid UTF-8 files, dependency folders, build output, virtual environments, and common cache directories are skipped.
+The loader handles common Python, JavaScript/TypeScript, Java, C/C++, C#, Go, Rust, PHP, Ruby, Swift, Kotlin, Scala, HTML/CSS, SQL, shell, configuration, Markdown, JSON, YAML, XML, Dockerfile, and Makefile content. Dependency folders, virtual environments, build outputs, cache folders, oversized files, and unreadable/binary content are skipped.
 
 ## Setup
 
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env`, add your Google API key, and select a Gemini model available to your account.
+Copy `.env.example` to `.env`, add `GOOGLE_API_KEY`, and select a Gemini model available to your account.
 
 ## Streamlit application
-
-Run the user interface with:
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-The sidebar lets you load a repository from a public GitHub URL, a local folder, or a ZIP upload. After the repository is prepared, enter an issue or repository question and click **Investigate repository**.
+The interface provides repository loading, repository status, visible agent workflow progress, investigation/plan/critic result views, and human approve/reject controls.
 
-The UI shows:
+For hosted Streamlit, use a public GitHub URL or ZIP upload. A hosted server cannot directly access an arbitrary folder path on a user's computer.
 
-- repository source and supported file count
-- visible agent workflow status
-- captured repository investigation
-- structured implementation plan
-- critic approval, retry count, and evidence feedback
-- final workflow output
-- human approval controls when LangGraph pauses at the approval gate
+## CLI examples
 
-If the human rejects a plan, feedback is sent back into the same checkpointed LangGraph thread. The Planner revises the plan, the Critic reviews it again, and the interface presents another approval request when appropriate.
-
-Local folder paths only work when Streamlit is running on the same computer that owns the folder. For a hosted Streamlit deployment, use a public GitHub URL or ZIP upload instead.
-
-## CLI
-
-The command-line interface remains available.
-
-### Bundled demo repository
+Bundled demo repository:
 
 ```bash
 python main.py --trace
 ```
 
-### Local folder
+Local repository:
 
 ```bash
 python main.py "Investigate the authentication flow and identify risky behavior." --repo "D:\Projects\MyApp" --source-type local --trace
 ```
 
-### Public GitHub repository
+Public GitHub repository:
 
 ```bash
 python main.py "Find where authentication is implemented and propose a safer design." --repo "https://github.com/user/project" --source-type github --trace
 ```
 
-### ZIP repository
+ZIP repository:
 
 ```bash
 python main.py "Inspect this repository for authentication-related impact." --repo "./project.zip" --source-type zip --trace
 ```
+
+## Reliability and safety choices
+
+- Repository file reads are restricted to the selected repository root.
+- ZIP extraction rejects unsafe path traversal.
+- Different repositories do not share a vector index.
+- Local-source content changes produce a new repository fingerprint/index identity.
+- Critic and human-revision loops are bounded to prevent uncontrolled recursion.
+- Human approval uses LangGraph interrupts and resume commands rather than blocking inside graph nodes.
+- Empty/unsupported repositories fail early with a clear error.
+- Human rejection requires feedback before the workflow resumes.
+- CLI startup errors are converted into concise user-facing failures.
 
 ## Tests
 
@@ -144,4 +166,22 @@ python main.py "Inspect this repository for authentication-related impact." --re
 pytest
 ```
 
-Tests cover ingestion metadata, repository-safe file reading, routing, reflection, evidence re-investigation, bounded retries, human approval/resume behavior, local repository preparation, ZIP extraction, ZIP traversal protection, automatic source detection, and uploaded ZIP validation. Graph tests use deterministic fake agents so they do not require a live model API key.
+The test suite covers ingestion metadata, safe repository reading, routing, tool loops, investigator/planner handoff, critic reflection, evidence re-investigation, bounded retries, human approval/resume behavior, source detection, local/ZIP repository preparation, ZIP traversal protection, upload validation, and workflow-service edge cases.
+
+Graph tests use deterministic fake models/agents so the core orchestration can be validated without consuming a live model quota.
+
+## Deployment
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for local and hosted Streamlit notes, environment requirements, workspace behavior, resource considerations, and production-hardening recommendations.
+
+## Current limitations
+
+- GitHub URL mode currently targets public repositories.
+- The development checkpointer is in-memory; process restarts do not preserve interrupted sessions.
+- Local embedding/reranking models can take time to download and index large repositories.
+- This version investigates and plans changes; it does not automatically edit repository code.
+- LangSmith observability was intentionally deferred and can be added later without changing the core workflow architecture.
+
+## Portfolio summary
+
+Issue2Impact demonstrates a progression from repository RAG to tool use, LangGraph state/cycles, specialized multi-agent handoffs, reflection, self-healing retries, human governance, dynamic repository ingestion, and a user-facing Streamlit application. The result is a complete end-to-end Agentic AI repository-analysis system rather than a single-prompt prototype.

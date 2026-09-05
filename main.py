@@ -1,25 +1,13 @@
 import argparse
-from uuid import uuid4
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command
-
-from src.graph.repository_graph import RepositoryGraph
-from src.ingestion.chunking import chunk_documents
-from src.ingestion.loader import load_repository
-from src.llm.model import get_llm
-from src.prompts.repository_agent_prompt import REPOSITORY_AGENT_PROMPT
-from src.repository.source import prepare_repository
-from src.retrieval.pipeline import RetrievalPipeline
-from src.retrieval.vector_store import (
-    create_vector_store,
-    load_vector_store,
-    vector_store_exists,
-)
-from src.tools.repository_tools import (
-    create_repository_read_tool,
-    create_repository_search_tool,
+from src.services.workflow import (
+    build_repository_graph,
+    extract_text,
+    get_interrupt_payload,
+    make_config,
+    prepare_repository_runtime,
+    resume_workflow,
+    start_workflow,
 )
 
 
@@ -28,47 +16,6 @@ Users sometimes remain authenticated when an invalid token is supplied.
 Investigate how token validation and logout work in this repository and give me
 an implementation plan to make authentication handling safer.
 """.strip()
-
-
-def build_repository_graph(
-    repo_path: str,
-    repository_id: str,
-    checkpointer=None,
-):
-    """Build the repository-specific graph, retrieval index, and tools."""
-    if vector_store_exists(repository_id):
-        vector_store = load_vector_store(repository_id)
-    else:
-        documents = load_repository(repo_path)
-        if not documents:
-            raise ValueError(
-                "No supported source files were found in the selected repository."
-            )
-        chunks = chunk_documents(documents)
-        if not chunks:
-            raise ValueError("Repository files were loaded but produced no searchable chunks.")
-        vector_store = create_vector_store(chunks, repository_id)
-
-    retrieval_pipeline = RetrievalPipeline(vector_store)
-    repository_search = create_repository_search_tool(retrieval_pipeline)
-    repository_read = create_repository_read_tool(repo_path)
-
-    return RepositoryGraph(
-        llm=get_llm(),
-        tools=[repository_search, repository_read],
-    ).build(checkpointer=checkpointer)
-
-
-def extract_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            block.get("text", "")
-            for block in content
-            if isinstance(block, dict)
-        )
-    return str(content)
 
 
 def print_trace(result, repository=None):
@@ -114,36 +61,12 @@ def run(
     thread_id: str | None = None,
 ):
     """Prepare a repository, run the workflow, and handle human approval interrupts."""
-    repository = prepare_repository(repository_source, source_type=source_type)
+    runtime = prepare_repository_runtime(repository_source, source_type=source_type)
+    config = make_config(thread_id=thread_id)
+    result, config = start_workflow(runtime.graph, query, config=config)
 
-    checkpointer = InMemorySaver()
-    graph = build_repository_graph(
-        repo_path=str(repository.path),
-        repository_id=repository.repository_id,
-        checkpointer=checkpointer,
-    )
-
-    config = {
-        "configurable": {
-            "thread_id": thread_id or f"issue2impact-{uuid4()}",
-        },
-        "recursion_limit": 30,
-    }
-
-    result = graph.invoke(
-        {
-            "user_query": query,
-            "retry_count": 0,
-            "messages": [
-                SystemMessage(content=REPOSITORY_AGENT_PROMPT),
-                HumanMessage(content=query),
-            ],
-        },
-        config=config,
-    )
-
-    while result.get("__interrupt__"):
-        interrupt_info = result["__interrupt__"][0].value
+    while get_interrupt_payload(result):
+        interrupt_info = get_interrupt_payload(result)
 
         print("\n=== HUMAN APPROVAL REQUIRED ===")
         print(interrupt_info.get("message", "Review the proposed plan."))
@@ -154,27 +77,26 @@ def run(
 
         answer = input_fn("\nApprove plan? [y/n]: ").strip().lower()
         approved = answer in {"y", "yes"}
+        feedback = (
+            "Approved by human reviewer."
+            if approved
+            else input_fn("Why are you rejecting it? ").strip()
+        )
 
-        if approved:
-            feedback = "Approved by human reviewer."
-        else:
-            feedback = input_fn("Why are you rejecting it? ").strip()
-
-        result = graph.invoke(
-            Command(
-                resume={
-                    "approved": approved,
-                    "feedback": feedback,
-                }
-            ),
-            config=config,
+        result = resume_workflow(
+            runtime.graph,
+            config,
+            approved=approved,
+            feedback=feedback,
         )
 
     if show_trace:
-        print_trace(result, repository=repository)
+        print_trace(result, repository=runtime.repository)
 
-    final_content = result["messages"][-1].content
-    return extract_text(final_content)
+    messages = result.get("messages", [])
+    if not messages:
+        return "Workflow finished without a final message."
+    return extract_text(messages[-1].content)
 
 
 if __name__ == "__main__":
@@ -206,11 +128,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print(
-        run(
-            args.query,
-            repository_source=args.repo,
-            source_type=args.source_type,
-            show_trace=args.trace,
+    try:
+        print(
+            run(
+                args.query,
+                repository_source=args.repo,
+                source_type=args.source_type,
+                show_trace=args.trace,
+            )
         )
-    )
+    except (ValueError, RuntimeError) as error:
+        raise SystemExit(f"Issue2Impact could not start: {error}") from error
