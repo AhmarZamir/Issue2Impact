@@ -1,18 +1,12 @@
 from pathlib import Path
+
 from langchain_core.tools import tool
 
 
 def create_repository_search_tool(retrieval_pipeline):
-
     @tool
     def search_repository(query: str) -> str:
-        """
-        Search the source-code repository for files and code
-        relevant to a question.
-
-        Use this tool whenever repository evidence is required.
-        """
-
+        """Search the active source-code repository for relevant files and code."""
         results = retrieval_pipeline.retrieve(query)
 
         if not results:
@@ -21,16 +15,8 @@ def create_repository_search_tool(retrieval_pipeline):
         formatted_results = []
 
         for index, (document, score) in enumerate(results, start=1):
-
-            file_path = document.metadata.get(
-                "file_path",
-                "Unknown file path",
-            )
-
-            chunk_index = document.metadata.get(
-                "chunk_index",
-                "Unknown chunk index",
-            )
+            file_path = document.metadata.get("file_path", "Unknown file path")
+            chunk_index = document.metadata.get("chunk_index", "Unknown chunk index")
 
             formatted_results.append(
                 f"""
@@ -48,42 +34,35 @@ Code:
     return search_repository
 
 
-@tool
-def read_repository_file(file_path: str) -> str:
-    """
-    Read the complete content of a specific file
-    from the demo repository.
+def create_repository_read_tool(repo_path: str):
+    repo_root = Path(repo_path).expanduser().resolve()
 
-    Use this after search_repository identifies
-    a file that needs closer inspection.
-    """
+    if not repo_root.exists() or not repo_root.is_dir():
+        raise ValueError(f"Repository folder does not exist: {repo_path}")
 
-    repo_root = Path("demo_repo").resolve()
+    @tool
+    def read_repository_file(file_path: str) -> str:
+        """
+        Read the complete content of a specific file from the active repository.
 
-    requested_path = (
-        repo_root / file_path
-    ).resolve()
+        Use this after search_repository identifies a file that needs closer inspection.
+        """
+        requested_path = (repo_root / file_path).resolve()
 
-    # Prevent access outside demo_repo
-    if (
-        requested_path != repo_root
-        and repo_root not in requested_path.parents
-    ):
-        return "Invalid file path."
+        if requested_path != repo_root and repo_root not in requested_path.parents:
+            return "Invalid file path."
 
-    if not requested_path.exists():
-        return f"File does not exist: {file_path}"
+        if not requested_path.exists():
+            return f"File does not exist: {file_path}"
 
-    if not requested_path.is_file():
-        return f"Not a file: {file_path}"
+        if not requested_path.is_file():
+            return f"Not a file: {file_path}"
 
-    try:
-        return requested_path.read_text(
-            encoding="utf-8"
-        )
+        try:
+            return requested_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return "Unable to read file as UTF-8."
+        except OSError as error:
+            return f"Unable to read file: {error}"
 
-    except UnicodeDecodeError:
-        return "Unable to read file as UTF-8."
-
-    except OSError as error:
-        return f"Unable to read file: {error}"
+    return read_repository_file

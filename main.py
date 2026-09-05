@@ -10,6 +10,7 @@ from src.ingestion.chunking import chunk_documents
 from src.ingestion.loader import load_repository
 from src.llm.model import get_llm
 from src.prompts.repository_agent_prompt import REPOSITORY_AGENT_PROMPT
+from src.repository.source import prepare_repository
 from src.retrieval.pipeline import RetrievalPipeline
 from src.retrieval.vector_store import (
     create_vector_store,
@@ -17,8 +18,8 @@ from src.retrieval.vector_store import (
     vector_store_exists,
 )
 from src.tools.repository_tools import (
+    create_repository_read_tool,
     create_repository_search_tool,
-    read_repository_file,
 )
 
 
@@ -29,21 +30,32 @@ an implementation plan to make authentication handling safer.
 """.strip()
 
 
-def build_repository_graph(repo_path: str = "demo_repo", checkpointer=None):
-    """Build the Phase 9 graph with retrieval dependencies and persistence."""
-    if vector_store_exists():
-        vector_store = load_vector_store()
+def build_repository_graph(
+    repo_path: str,
+    repository_id: str,
+    checkpointer=None,
+):
+    """Build the repository-specific graph, retrieval index, and tools."""
+    if vector_store_exists(repository_id):
+        vector_store = load_vector_store(repository_id)
     else:
         documents = load_repository(repo_path)
+        if not documents:
+            raise ValueError(
+                "No supported source files were found in the selected repository."
+            )
         chunks = chunk_documents(documents)
-        vector_store = create_vector_store(chunks)
+        if not chunks:
+            raise ValueError("Repository files were loaded but produced no searchable chunks.")
+        vector_store = create_vector_store(chunks, repository_id)
 
     retrieval_pipeline = RetrievalPipeline(vector_store)
     repository_search = create_repository_search_tool(retrieval_pipeline)
+    repository_read = create_repository_read_tool(repo_path)
 
     return RepositoryGraph(
         llm=get_llm(),
-        tools=[repository_search, read_repository_file],
+        tools=[repository_search, repository_read],
     ).build(checkpointer=checkpointer)
 
 
@@ -59,7 +71,14 @@ def extract_text(content):
     return str(content)
 
 
-def print_trace(result):
+def print_trace(result, repository=None):
+    if repository is not None:
+        print("\n=== REPOSITORY ===")
+        print("Name:", repository.name)
+        print("Source type:", repository.source_type)
+        print("Path:", repository.path)
+        print("Repository ID:", repository.repository_id)
+
     print("\n=== ROUTING ===")
     print("Route:", result.get("route"))
     print("Reason:", result.get("route_reason"))
@@ -86,10 +105,23 @@ def print_trace(result):
         print(message)
 
 
-def run(query: str, show_trace: bool = False, input_fn=input, thread_id: str | None = None):
-    """Run the graph and handle any human-approval interrupts in the terminal."""
+def run(
+    query: str,
+    repository_source: str = "demo_repo",
+    source_type: str = "auto",
+    show_trace: bool = False,
+    input_fn=input,
+    thread_id: str | None = None,
+):
+    """Prepare a repository, run the workflow, and handle human approval interrupts."""
+    repository = prepare_repository(repository_source, source_type=source_type)
+
     checkpointer = InMemorySaver()
-    graph = build_repository_graph(checkpointer=checkpointer)
+    graph = build_repository_graph(
+        repo_path=str(repository.path),
+        repository_id=repository.repository_id,
+        checkpointer=checkpointer,
+    )
 
     config = {
         "configurable": {
@@ -123,11 +155,10 @@ def run(query: str, show_trace: bool = False, input_fn=input, thread_id: str | N
         answer = input_fn("\nApprove plan? [y/n]: ").strip().lower()
         approved = answer in {"y", "yes"}
 
-        feedback = ""
-        if not approved:
-            feedback = input_fn("Why are you rejecting it? ").strip()
-        else:
+        if approved:
             feedback = "Approved by human reviewer."
+        else:
+            feedback = input_fn("Why are you rejecting it? ").strip()
 
         result = graph.invoke(
             Command(
@@ -140,23 +171,46 @@ def run(query: str, show_trace: bool = False, input_fn=input, thread_id: str | N
         )
 
     if show_trace:
-        print_trace(result)
+        print_trace(result, repository=repository)
 
     final_content = result["messages"][-1].content
     return extract_text(final_content)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Issue2Impact agent graph.")
+    parser = argparse.ArgumentParser(
+        description="Investigate a local, GitHub, or ZIP source-code repository."
+    )
     parser.add_argument("query", nargs="?", default=DEFAULT_QUERY)
+    parser.add_argument(
+        "--repo",
+        default="demo_repo",
+        help=(
+            "Repository source: local folder path, public GitHub repository URL, "
+            "or path to a ZIP archive."
+        ),
+    )
+    parser.add_argument(
+        "--source-type",
+        choices=["auto", "local", "github", "zip"],
+        default="auto",
+        help="Repository source type. 'auto' detects the type from --repo.",
+    )
     parser.add_argument(
         "--trace",
         action="store_true",
         help=(
-            "Print routing, investigation, plan, critic state, human-review state, "
-            "and every message in the workflow."
+            "Print repository metadata, routing, investigation, plan, critic state, "
+            "human-review state, and every message in the workflow."
         ),
     )
     args = parser.parse_args()
 
-    print(run(args.query, show_trace=args.trace))
+    print(
+        run(
+            args.query,
+            repository_source=args.repo,
+            source_type=args.source_type,
+            show_trace=args.trace,
+        )
+    )

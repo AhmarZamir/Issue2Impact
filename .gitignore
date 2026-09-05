@@ -4,4 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 chroma_db/
+data/vector_stores/
+workspace/repos/
+workspace/uploads/
 .env

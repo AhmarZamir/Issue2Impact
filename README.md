@@ -1,63 +1,78 @@
 # Issue2Impact
 
-Issue2Impact is a learning-focused Agentic AI project for investigating software issues using repository-grounded evidence.
+Issue2Impact is a learning-focused Agentic AI system for investigating software issues using repository-grounded evidence.
 
-It currently combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, retrieval evaluation, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic review, reflection, bounded self-healing retries, and human-in-the-loop approval.
+It combines repository ingestion, code-aware chunking, local embeddings, Chroma vector search, cross-encoder reranking, tool calling, routed LangGraph orchestration, repository investigation, structured implementation planning, critic reflection, bounded self-healing retries, and human approval gates.
 
-## Current phases
+## What it can inspect
 
-- Phase 1: repository loading and code-aware chunking
-- Phase 2: Hugging Face embeddings and Chroma vector storage
-- Phase 3: candidate retrieval, reranking, and retrieval evaluation
-- Phase 4: conditional tool calling with repository search and safe file reading
-- Phase 5: LangGraph state, agent/tool nodes, conditional routing, and cycles
-- Phase 6: router agent, richer graph state, structured route decisions, general/unsupported branches, and context-aware execution
-- Phase 7: repository investigator -> planner handoff, investigation state, structured implementation plans, and multi-agent specialization
-- Phase 8: critic agent, reflection, plan revision, evidence re-investigation, bounded retries, and safe termination
-- Phase 9: human-in-the-loop approval with LangGraph interrupts, checkpointed state, thread IDs, resume commands, and human-guided plan revision
+Issue2Impact can now prepare and inspect three repository sources:
 
-## Phase 9 workflow
+- a local repository folder
+- a public GitHub repository URL
+- a local ZIP archive containing a repository
+
+Every source is resolved to a local repository path before the agent workflow starts. The repository reader and retrieval tools are then created specifically for that repository.
+
+Repository indexes are isolated under `data/vector_stores/<repository-id>/`. The repository ID includes a source fingerprint, so different repositories do not share the same Chroma index and local source changes create a fresh index identity.
+
+GitHub repositories are cloned into `workspace/repos/`. Existing cached clones are fast-forwarded when possible. Git must be installed and available on `PATH` for GitHub URL mode.
+
+## Current capabilities
+
+- repository loading and code-aware chunking
+- Hugging Face embeddings and Chroma vector storage
+- candidate retrieval, reranking, and retrieval evaluation
+- conditional tool calling with repository search and safe file reading
+- LangGraph state, routing, cycles, and multi-agent handoffs
+- Repository Investigator and structured Planner Agent
+- Critic Agent with plan revision and evidence re-investigation
+- bounded retry/self-healing loops
+- human-in-the-loop approval using LangGraph interrupts, checkpoints, thread IDs, and resume commands
+- dynamic local/GitHub/ZIP repository input
+- repository-specific vector indexes and read tools
+
+## Workflow
 
 ```text
-START
-  ↓
+Repository source
+      ↓
+Local folder / GitHub / ZIP
+      ↓
+RepositoryContext
+      ↓
+Repository-specific index + tools
+      ↓
 Router
-  ├── repository
-  │      ↓
-  │  Repository Investigator
-  │      ↓
-  │   Tool needed?
-  │    ↙       ↘
-  │  Tools   Capture Investigation
-  │    ↓             ↓
-  │ Investigator   Planner
-  │                  ↓
-  │                Critic
-  │          ┌────────┼──────────┐
-  │          ↓        ↓          ↓
-  │      Weak Plan  More       Critic Approved
-  │          ↓      Evidence          ↓
-  │       Planner      ↓        Human Approval
-  │                    ↓        ↙            ↘
-  │              Investigator Reject       Approve
-  │                              ↓            ↓
-  │                       Human Feedback   Finalize
-  │                              ↓            ↓
-  │                           Planner        END
-  │
   ├── general → General Software Node → END
-  └── unsupported → Deterministic Scope Response → END
+  ├── unsupported → Scope Response → END
+  └── repository
+          ↓
+    Repository Investigator
+          ↕
+        Tools
+          ↓
+    Capture Investigation
+          ↓
+        Planner
+          ↓
+        Critic
+     ┌────┼──────────────┐
+     ↓    ↓              ↓
+  Revise  More evidence  Approved
+     ↓    ↓              ↓
+  Planner Investigator  Human approval
+                         ↙          ↘
+                      Reject      Approve
+                        ↓            ↓
+                     Planner      Finalize
+                                      ↓
+                                     END
 ```
 
-The Critic is still responsible for technical quality: grounding, relevance, actionability, tests, risk, and evidence sufficiency. Once the Critic approves a plan, the graph no longer finishes automatically. It pauses with LangGraph `interrupt()` and waits for a human decision.
+## Supported source files
 
-Human approval is implemented as a real workflow pause/resume boundary rather than a blocking `input()` inside a graph node. The CLI handles the user interface outside the node, then resumes the exact same graph execution with `Command(resume=...)`.
-
-Phase 9 uses `InMemorySaver` and a `thread_id` so LangGraph can preserve the workflow state while paused. The same thread ID is reused for the resume command. This preserves the investigation, plan, critic feedback, retry count, and current graph position.
-
-If the human rejects the plan, the feedback is sent back to the Planner. The revised plan is reviewed by the Critic again and, if technically approved, is presented to the human again. Human rejections share the existing bounded retry budget so the workflow cannot loop indefinitely.
-
-The system still does not modify repository code. The approved output is an evidence-grounded implementation plan.
+The loader handles common Python, JavaScript/TypeScript, Java, C/C++, C#, Go, Rust, PHP, Ruby, Swift, Kotlin, Scala, HTML/CSS, SQL, shell, configuration, Markdown, JSON, YAML, XML, Dockerfile, and Makefile content. Large files, binary/invalid UTF-8 files, dependency folders, build output, virtual environments, and common cache directories are skipped.
 
 ## Setup
 
@@ -70,22 +85,37 @@ pip install -r requirements.txt
 
 Copy `.env.example` to `.env`, add your Google API key, and select a Gemini model available to your account.
 
-## Run
+## Run against the bundled demo repository
 
 ```bash
 python main.py --trace
-python main.py "Investigate token validation and logout and propose a safer implementation plan." --trace
 ```
 
-When the Critic approves a repository plan, the terminal will display the plan and ask:
+## Run against a local folder
 
-```text
-Approve plan? [y/n]:
+```bash
+python main.py "Investigate the authentication flow and identify risky behavior." --repo "D:\Projects\MyApp" --source-type local --trace
 ```
 
-If you reject it, you can enter feedback. The graph resumes from the saved checkpoint, revises the plan, reviews it again, and can pause for another human decision.
+`--source-type auto` is the default, so this also works:
 
-General programming questions and unsupported requests do not enter the human-approval path.
+```bash
+python main.py "Where is token validation implemented?" --repo "D:\Projects\MyApp"
+```
+
+## Run against a public GitHub repository
+
+```bash
+python main.py "Find where authentication is implemented and propose a safer design." --repo "https://github.com/user/project" --source-type github --trace
+```
+
+## Run against a ZIP repository
+
+```bash
+python main.py "Inspect this repository for authentication-related impact." --repo "./project.zip" --source-type zip --trace
+```
+
+When the Critic approves a repository plan, the workflow pauses and asks for human approval. A rejection can include feedback, which is sent back to the Planner before another Critic review.
 
 ## Tests
 
@@ -93,4 +123,4 @@ General programming questions and unsupported requests do not enter the human-ap
 pytest
 ```
 
-The graph tests use deterministic fake models, routers, planners, and critics. Phase 9 tests validate that critic approval pauses instead of finishing, approval resumes and finalizes the same thread, rejection feeds human feedback back into the Planner, repeated human rejection respects the retry limit, and non-repository routes bypass HITL.
+Tests cover ingestion metadata, repository-safe file reading, routing, reflection, evidence re-investigation, bounded retries, human approval/resume behavior, local repository preparation, ZIP extraction, ZIP traversal protection, and automatic source detection. The graph tests use deterministic fake agents so they do not require a live model API key.

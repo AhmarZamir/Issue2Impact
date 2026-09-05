@@ -1,46 +1,47 @@
-from langchain_chroma import Chroma
-
 from pathlib import Path
 
+from langchain_chroma import Chroma
+
+from src.retrieval.embeddings import get_embedding_model
 
 
-from src.retrieval.embeddings import (
-    get_embedding_model,
-)
+VECTOR_STORE_ROOT = Path("data/vector_stores")
 
 
-DB_PATH = "./chroma_db"
+def get_vector_store_path(repository_id: str) -> Path:
+    if not repository_id:
+        raise ValueError("repository_id is required for repository-specific vector storage.")
+    return VECTOR_STORE_ROOT / repository_id
 
-COLLECTION_NAME = "issue2impact"
+
+def _collection_name(repository_id: str) -> str:
+    return f"issue2impact_{repository_id[:12]}"
 
 
-def create_vector_store(chunks):
-
+def create_vector_store(chunks, repository_id: str):
     embeddings = get_embedding_model()
+    persist_directory = get_vector_store_path(repository_id)
+    persist_directory.mkdir(parents=True, exist_ok=True)
 
-    vector_store = Chroma.from_documents(
+    return Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
-        collection_name=COLLECTION_NAME,
-        persist_directory=DB_PATH,
+        collection_name=_collection_name(repository_id),
+        persist_directory=str(persist_directory),
     )
 
-    return vector_store
 
-
-def load_vector_store():
-
+def load_vector_store(repository_id: str):
     embeddings = get_embedding_model()
+    persist_directory = get_vector_store_path(repository_id)
 
-    vector_store = Chroma(
-        collection_name=COLLECTION_NAME,
+    return Chroma(
+        collection_name=_collection_name(repository_id),
         embedding_function=embeddings,
-        persist_directory=DB_PATH,
+        persist_directory=str(persist_directory),
     )
 
-    return vector_store
 
-
-def vector_store_exists():
-
-    return Path(DB_PATH).exists()
+def vector_store_exists(repository_id: str) -> bool:
+    persist_directory = get_vector_store_path(repository_id)
+    return persist_directory.exists() and any(persist_directory.iterdir())
