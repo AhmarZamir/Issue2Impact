@@ -8,4 +8,5 @@ sentence-transformers
 chromadb
 python-dotenv
 typing-extensions
+streamlit
 pytest
